@@ -14,15 +14,14 @@ lapply(data, function(x) sum(is.na(x)))
 
 str(data)
 
-#Data Pre-processing
-for(i in 1:nrow(data)){
-if(data[i,"converted_in_7days"]>1){
-  
-  data[i,"converted_in_7days"]<- 1
-  
-}
-}
+#Removing Region, Date, Client ID
+as.data.frame(colnames(data))
 
+data<-data[,-c(6,12,30)]
+
+#Data Pre-processing
+
+data$converted_in_7days<-ifelse(data$converted_in_7days>1,1,data$converted_in_7days)
 data$converted_in_7days<-as.factor(data$converted_in_7days)
 data$date<-ymd(data$date)
 data$visited_air_purifier_page<-as.factor(data$visited_air_purifier_page)
@@ -45,30 +44,20 @@ data$goal4Completions<-as.factor(data$goal4Completions)
 data$paid<-as.factor(data$paid)
 
 
-#feature engineering
-#Parsing of sourceMedium feature 
-data$source2<- 0
+#Parsing sourceMedium feature 
+data$sourceMedium<-sub(".*/", "", data$sourceMedium)
+trimws(data$sourceMedium,which = "left")
 
-data$source2<-sub(".*/", "", data$sourceMedium)
-trimws(data$source2,which = "left")
+data$sourceMedium<-as.character(data$sourceMedium)
 
-data$source2<-as.character(data$source2)
+data$sourceMedium<-ifelse(data$sourceMedium==" Social"," social",data$sourceMedium)
+data$sourceMedium<-ifelse(data$sourceMedium==" (none)","None",data$sourceMedium)
+data$sourceMedium<-ifelse(data$sourceMedium==" (not set)","None",data$sourceMedium)
+data$sourceMedium<-trimws(data$sourceMedium)
+data$sourceMedium<-as.factor(data$sourceMedium)
 
-data$source2<-ifelse(data$source2==" Social"," social",data$source2)
-data$source2<-ifelse(data$source2==" (none)","None",data$source2)
-data$source2<-ifelse(data$source2==" (not set)","None",data$source2)
-data$source2<-as.factor(data$source2)
 
-levels(data$source2)
-
-#Not mandatory to execute(Some additional feature enggineering)
-data$demoSales<-ifelse(data$visited_demo_page==1 & data$converted_in_7days==1,1,0)
-data$nuchkoutNAsales<-ifelse(data$newUser==1 & data$visited_checkout_page==0 & data$converted_in_7days==1,1,0)
-data$countrySeg<-ifelse(data$country=='d' & data$converted_in_7days==1,1,0)
-
-data$demoSales<-as.factor(data$demoSales)
-data$nuchkoutNAsales<-as.factor(data$nuchkoutNAsales)
-data$countrySeg<-as.factor(data$countrySeg)
+levels(data$sourceMedium)
 
 
 # Create a custom function to fix missing values ("NAs") and preserve the NA info as surrogate variables
@@ -131,7 +120,7 @@ testing <- data1[ -inTrain,]
 
 
 #-----Random Forest(Enter the ntree and mtry based on the results of Cross Validation)
-model_forest <- randomForest(converted_in_7days~.-region-client_id-date-sourceMedium, data=training, 
+model_forest <- randomForest(converted_in_7days~., data=training, 
                              type="classification",
                              importance=TRUE,
                              ntree = 500,           # hyperparameter: number of trees in the forest
@@ -197,7 +186,8 @@ model_XGboost<-xgboost(data = data.matrix(x_train),
 )
 
 XGboost_prediction<-predict(model_XGboost,newdata=x_test, type="response") #Predict classification (for confusion matrix)
-confusionMatrix(as.factor(ifelse(XGboost_prediction>0.3,1,0)),y_test,positive="1") #Display confusion matrix
+confusionMatrix(as.factor(ifelse(XGboost_prediction>0.5,1,0)),y_test,positive="1") #Display confusion matrix
+
 
 ####ROC Curve
 XGboost_ROC_prediction <- prediction(XGboost_prediction, y_test) #Calculate errors
