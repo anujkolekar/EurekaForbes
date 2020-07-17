@@ -4,7 +4,7 @@ if("pacman" %in% rownames(installed.packages())==FALSE){install.packages("pacman
 pacman::p_load("tensorflow","keras","xgboost","dplyr","caret",
                "ROCR","lift","glmnet","MASS","e1071"
                ,"mice","partykit","rpart","randomForest","dplyr"   
-               ,"lubridate","ROSE")
+               ,"lubridate","ROSE","smotefamily","DMwR")
 
 #Load DataSet
 data<-read.csv("C://Users//anuj//Documents//Anuj//MMA//Marketing Analytics//Mid Term Assignment//eureka_data_final_2019-01-01_2019-03-01.csv")
@@ -14,17 +14,16 @@ lapply(data, function(x) sum(is.na(x)))
 
 str(data)
 
-#Data Pre-processing
-for(i in 1:nrow(data)){
-  if(data[i,"converted_in_7days"]>1){
-    
-    data[i,"converted_in_7days"]<- 1
-    
-  }
-}
+as.data.frame(colnames(data))
 
+#Removing Region, Date, Client ID
+
+data<-data[,-c(6,12,30)]
+
+#Data Pre-processing
+
+data$converted_in_7days<-ifelse(data$converted_in_7days>1,1,data$converted_in_7days)
 data$converted_in_7days<-as.factor(data$converted_in_7days)
-data$date<-ymd(data$date)
 data$visited_air_purifier_page<-as.factor(data$visited_air_purifier_page)
 data$visited_checkout_page<-as.factor(data$visited_checkout_page)
 data$visited_contactus<-as.factor(data$visited_contactus)
@@ -45,29 +44,22 @@ data$goal4Completions<-as.factor(data$goal4Completions)
 data$paid<-as.factor(data$paid)
 
 
-#feature engineering
-data$source2<- 0
+#Parsing Source Medium Feature
+data$sourceMedium<-sub(".*/", "", data$sourceMedium)
+trimws(data$sourceMedium,which = "left")
 
-data$source2<-sub(".*/", "", data$sourceMedium)
-trimws(data$source2,which = "left")
+data$sourceMedium<-as.character(data$sourceMedium)
 
-data$source2<-as.character(data$source2)
+data$sourceMedium<-ifelse(data$sourceMedium==" Social"," social",data$sourceMedium)
+data$sourceMedium<-ifelse(data$sourceMedium==" (none)","None",data$sourceMedium)
+data$sourceMedium<-ifelse(data$sourceMedium==" (not set)","None",data$sourceMedium)
+data$sourceMedium<-trimws(data$sourceMedium)
+data$sourceMedium<-as.factor(data$sourceMedium)
 
-data$source2<-ifelse(data$source2==" Social"," social",data$source2)
-data$source2<-ifelse(data$source2==" (none)","None",data$source2)
-data$source2<-ifelse(data$source2==" (not set)","None",data$source2)
-data$source2<-as.factor(data$source2)
 
-levels(data$source2)
+levels(data$sourceMedium)
 
-#Not mandatory to execute
-data$demoSales<-ifelse(data$visited_demo_page==1 & data$converted_in_7days==1,1,0)
-data$nuchkoutNAsales<-ifelse(data$newUser==1 & data$visited_checkout_page==0 & data$converted_in_7days==1,1,0)
-data$countrySeg<-ifelse(data$country=='d' & data$converted_in_7days==1,1,0)
 
-data$demoSales<-as.factor(data$demoSales)
-data$nuchkoutNAsales<-as.factor(data$nuchkoutNAsales)
-data$countrySeg<-as.factor(data$countrySeg)
 
 
 # Create a custom function to fix missing values ("NAs") and preserve the NA info as surrogate variables
@@ -120,17 +112,15 @@ fixNAs<-function(data_frame){
 
 data1<-fixNAs(data)
 
-#Data Set Balancing
+#Smote Balancing
+data_balance<-SMOTE(converted_in_7days~.,data=data1,perc.over=200,perc.under=200)
 
-data1_balance<-ovun.sample(converted_in_7days~.,data=data1,method="both",
-                           p=0.5,N=100000,seed=1)$data
+table(data_balance$converted_in_7days)
 
-table(data1_balance$converted_in_7days)
-
-head(data1_balance)
+str(data_balance)
 
 #Principle Component Analysis(This is not a mandatory step)
-str(data1_balance)
+str(data1)
 
 
 data1$fired_DemoReqPg_CallClicks_evt<-as.numeric(data1$fired_DemoReqPg_CallClicks_evt)
@@ -151,29 +141,29 @@ data1.pca$rotation
 #Data Split
 
 set.seed(77850) #set a random number generation seed to ensure that the split is the same everytime
-inTrain <- createDataPartition(y = data1_balance$converted_in_7days,
-                               p = 80000/100000, list = FALSE)
-training <- data1_balance[ inTrain,]
-testing <- data1_balance[ -inTrain,]
+inTrain <- createDataPartition(y = data_balance$converted_in_7days,
+                               p = 0.8, list = FALSE)
+training <- data_balance[ inTrain,]
+testing <- data_balance[ -inTrain,]
 
 
 #Hyperparameter Tuning
 control<-trainControl(method="repeatedcv",number=10,repeats=1,search="random")
-start_time_rf<-system.time()
+start_time_rf<-Sys.time()
 for(i in c(50,100,150)){
-  rf_random<-train(converted_in_7days~.-region-client_id-date-sourceMedium,
+  rf_random<-train(converted_in_7days~.,
                    data=training,ntree=i,method="rf",metric="Accuracy",tuneLength=3,trControl=control)
   print(i)
   print(rf_random)
   plot(rf_random)
 }
-end_time_rf<-system.time()
+end_time_rf<-Sys.time()
 
 #-----Random Forest(Enter the ntree and mtry based on the results of Cross Validation)
-model_forest <- randomForest(converted_in_7days~.-region-client_id-date-sourceMedium, data=training, 
+model_forest <- randomForest(converted_in_7days~., data=training, 
                              type="classification",
                              importance=TRUE,
-                             ntree = 500,           # hyperparameter: number of trees in the forest
+                             ntree = 25,           # hyperparameter: number of trees in the forest
                              mtry = 10,             # hyperparameter: number of random columns to grow each tree
                              nodesize = 10,         # hyperparameter: min number of datapoints on the leaf of each tree
                              maxnodes = 10,         # hyperparameter: maximum number of leafs of a tree
@@ -187,8 +177,8 @@ varImpPlot(model_forest) # plots variable importances; use importance(model_fore
 
 ###Finding predicitons: probabilities and classification
 forest_probabilities<-predict(model_forest,newdata=testing,type="prob") #Predict probabilities -- an array with 2 columns: for not retained (class 0) and for retained (class 1)
-weforest_classification<-rep("1",100000)
-forest_classification[forest_probabilities[,2]<0.5]="0" #Predict classification using 0.5 threshold. Why 0.5 and not 0.6073? Use the same as in cutoff above
+forest_classification<-rep("1",3962)
+forest_classification[forest_probabilities[,2]<0.4]="0" #Predict classification using 0.5 threshold. Why 0.5 and not 0.6073? Use the same as in cutoff above
 forest_classification<-as.factor(forest_classification)
 
 confusionMatrix(forest_classification,testing$converted_in_7days, positive="1") #Display confusion matrix. Note, confusion matrix actually displays a better accuracy with threshold of 50%
@@ -218,9 +208,7 @@ plot(Lift_forest)
 #xgBoost
 #data_matrix <- model.matrix(converted_in_7days~ .-region-client_id-date-sourceMedium, data = data1_balance)[,-1]
 
-data_matrix<-data.matrix(dplyr::select(data1,-converted_in_7days))
-
-data_matrix
+data_matrix<-data.matrix(dplyr::select(data_balance,-converted_in_7days))
 
 x_train <- data_matrix[ inTrain,]
 x_test <- data_matrix[ -inTrain,]
@@ -228,21 +216,30 @@ x_test <- data_matrix[ -inTrain,]
 y_train <-training$converted_in_7days
 y_test <-testing$converted_in_7days
 
+#xgBoost Hyper-parameter tuning
+control<-trainControl(method="repeatedcv",
+                      number=5,repeats=1,search="random")
 
+start_time_xg<-Sys.time()
 
-model_XGboost<-xgboost(data = data.matrix(x_train), 
-                       label = as.numeric(as.character(y_train)), 
-                       eta = 0.1,       # hyperparameter: learning rate 
-                       max_depth = 20,  # hyperparameter: size of a tree in each boosting iteration
-                       nround=50,       # hyperparameter: number of boosting iterations  
-                       objective = "binary:logistic"
-)
+xg_Boost<-train(y=y_train,
+                   x=x_train,method="xgbTree",metric="accuracy",
+                tuneLength=3,trControl=control)
 
-XGboost_prediction<-predict(model_XGboost,newdata=x_test, type="response") #Predict classification (for confusion matrix)
-confusionMatrix(as.factor(ifelse(XGboost_prediction>0.5,1,0)),y_test,positive="1") #Display confusion matrix
+end_time_xg<-Sys.time()
+
+#Print summary of all Cross validations
+print(xg_Boost)
+
+#Print hyperparameters best tuned model
+xg_Boost$bestTune
+
+#Calculate Probability and build confusion matrix
+XGboost_prediction<-predict(xg_Boost,newdata=x_test,type="prob") #Predict classification (for confusion matrix)
+confusionMatrix(as.factor(ifelse(XGboost_prediction[,2]>0.4,1,0)),y_test,positive="1") #Display confusion matrix
 
 ####ROC Curve
-XGboost_ROC_prediction <- prediction(XGboost_prediction, y_test) #Calculate errors
+XGboost_ROC_prediction <- prediction(XGboost_prediction[,2], y_test) #Calculate errors
 XGboost_ROC_testing <- performance(XGboost_ROC_prediction,"tpr","fpr") #Create ROC curve data
 plot(XGboost_ROC_testing) #Plot ROC curve
 
